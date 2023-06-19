@@ -1,7 +1,7 @@
 use std::error::Error;
 
-use chrono::NaiveTime;
-use derive_builder::Builder;
+use birthday::BirthdayBuildState;
+use simple_notification::SimpleNotificationBuildState;
 use teloxide::types::Me;
 use teloxide::utils::command::BotCommands;
 use teloxide::{dispatching::dialogue::InMemStorage, prelude::*};
@@ -9,20 +9,9 @@ use teloxide::{dispatching::dialogue::InMemStorage, prelude::*};
 type MyDialogue = Dialogue<State, InMemStorage<State>>;
 type HandlerResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
-pub enum RememberUnit {
-    Birthday(Birthday),
-}
-#[derive(Debug, Builder, Clone)]
-pub struct Birthday {
-    enabled: bool,
-    name: String,
-    bday: u8,
-    bmonth: u8,
-    byear: Option<u16>,
-    // How many days before birthday should be first ping
-    preping: Option<u8>,
-    daytime_to_ping: NaiveTime,
-}
+// pub enum RememberUnit {
+//     Birthday(Birthday),
+// }
 
 #[derive(BotCommands, Clone)]
 #[command(
@@ -30,7 +19,9 @@ pub struct Birthday {
     description = "These commands are supported:"
 )]
 enum Command {
+    Help,
     AddBirthday,
+    SimpleNotification,
 }
 
 #[derive(Clone, Default)]
@@ -38,15 +29,7 @@ pub enum State {
     #[default]
     Start,
     BirthdayBuild(BirthdayBuildState),
-}
-
-#[derive(Clone)]
-pub enum BirthdayBuildState {
-    Name,
-    Date(BirthdayBuilder),
-    Preping(BirthdayBuilder),
-    DaytimeToPing(BirthdayBuilder),
-    Build(BirthdayBuilder),
+    SimpleNotificationBuild(simple_notification::SimpleNotificationBuildState),
 }
 
 #[tokio::main]
@@ -54,7 +37,10 @@ async fn main() {
     pretty_env_logger::init();
     log::info!("Starting dialogue bot...");
 
-    let bot = Bot::from_env();
+    let token = dotenvy::var("TELOXIDE_TOKEN").unwrap();
+
+    // let bot = Bot::from_env();
+    let bot = Bot::new(token);
 
     let handler = Update::filter_message()
         .enter_dialogue::<Message, InMemStorage<State>, State>()
@@ -68,6 +54,25 @@ async fn main() {
                     dptree::case![BirthdayBuildState::DaytimeToPing(bb)]
                         .endpoint(birthday::daytime),
                 ),
+        )
+        .branch(
+            dptree::case![State::SimpleNotificationBuild(snbs)]
+                .branch(
+                    dptree::case![SimpleNotificationBuildState::Text]
+                        .endpoint(simple_notification::text),
+                )
+                .branch(
+                    dptree::case![SimpleNotificationBuildState::Date(snb)]
+                        .endpoint(simple_notification::date),
+                )
+                .branch(
+                    dptree::case![SimpleNotificationBuildState::Time(snb)]
+                        .endpoint(simple_notification::time),
+                )
+                .branch(
+                    dptree::case![SimpleNotificationBuildState::Build(snb)]
+                        .endpoint(simple_notification::build),
+                ),
         );
 
     Dispatcher::builder(bot, handler)
@@ -78,13 +83,145 @@ async fn main() {
         .await;
 }
 
+pub mod simple_notification {
+    use std::error::Error;
+
+    use chrono::{NaiveDate, NaiveTime};
+    use derive_builder::Builder;
+    use teloxide::prelude::*;
+
+    use crate::{MyDialogue, State};
+
+    #[derive(Debug, Builder, Clone)]
+    pub struct SimpleNotification {
+        enabled: bool,
+        text: String,
+        date: NaiveDate,
+        daytime: NaiveTime,
+    }
+
+    #[derive(Clone)]
+    pub enum SimpleNotificationBuildState {
+        Text,
+        Date(SimpleNotificationBuilder),
+        Time(SimpleNotificationBuilder),
+        Build(SimpleNotificationBuilder),
+    }
+
+    pub(crate) async fn text(
+        bot: Bot,
+        msg: Message,
+        dialogue: MyDialogue,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let mut snb = SimpleNotificationBuilder::create_empty();
+        if let Some(text) = msg.text() {
+            snb.text(text.to_string());
+            dialogue
+                .update(State::SimpleNotificationBuild(
+                    SimpleNotificationBuildState::Date(snb),
+                ))
+                .await?;
+            bot.send_message(
+                msg.chat.id,
+                "When you want me to send you this notification? \n\"dd:mm:yyyy\"",
+            )
+            .await?;
+        }
+
+        Ok(())
+    }
+
+    pub(crate) async fn date(
+        bot: Bot,
+        msg: Message,
+        dialogue: MyDialogue,
+        mut snb: SimpleNotificationBuilder,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        if let Some(text) = msg.text() {
+            let v: Vec<_> = text.split(':').map(|x| x.parse::<i32>().unwrap()).collect();
+            let date = NaiveDate::from_ymd_opt(v[2], v[1] as u32, v[0] as u32).unwrap();
+            snb.date(date);
+
+            dialogue
+                .update(State::SimpleNotificationBuild(
+                    SimpleNotificationBuildState::Time(snb),
+                ))
+                .await?;
+
+            bot.send_message(
+                msg.chat.id,
+                "What time of day you want me to send you this notification? \n\"hh:mm\"",
+            )
+            .await?;
+        }
+        Ok(())
+    }
+    pub(crate) async fn time(
+        bot: Bot,
+        msg: Message,
+        dialogue: MyDialogue,
+        mut snb: SimpleNotificationBuilder,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        if let Some(text) = msg.text() {
+            let v: Vec<_> = text.split(':').map(|x| x.parse::<u32>().unwrap()).collect();
+            let time = NaiveTime::from_hms_opt(v[0], v[1], 0).unwrap();
+            snb.daytime(time);
+
+            dialogue
+                .update(State::SimpleNotificationBuild(
+                    SimpleNotificationBuildState::Build(snb),
+                ))
+                .await?;
+
+            bot.send_message(
+                msg.chat.id,
+                "What time of day you want me to send you this notification? \n\"hh:mm\"",
+            )
+            .await?;
+        }
+        Ok(())
+    }
+    pub(crate) async fn build(
+        bot: Bot,
+        msg: Message,
+        dialogue: MyDialogue,
+        snb: SimpleNotificationBuilder,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        todo!();
+        Ok(())
+    }
+}
+
 pub mod birthday {
     use std::error::Error;
 
+    use chrono::NaiveTime;
+    use derive_builder::Builder;
     use teloxide::prelude::*;
     use teloxide::types::ParseMode;
 
-    use crate::{BirthdayBuildState, BirthdayBuilder, MyDialogue, State};
+    use crate::{MyDialogue, State};
+
+    #[derive(Debug, Builder, Clone)]
+    pub struct Birthday {
+        enabled: bool,
+        name: String,
+        bday: u8,
+        bmonth: u8,
+        byear: Option<u16>,
+        // How many days before birthday should be first ping
+        preping: Option<u8>,
+        daytime_to_ping: NaiveTime,
+    }
+
+    #[derive(Clone)]
+    pub enum BirthdayBuildState {
+        Name,
+        Date(BirthdayBuilder),
+        Preping(BirthdayBuilder),
+        DaytimeToPing(BirthdayBuilder),
+        Build(BirthdayBuilder),
+    }
 
     pub(crate) async fn name(
         bot: Bot,
@@ -244,10 +381,21 @@ async fn command_handler(
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     if let Some(text) = msg.text() {
         match BotCommands::parse(text, me.username()) {
-            // Ok(Command::Help) => {
-            //     // Just send the description of all commands.
-            //     // bot.send_message(msg.chat.id, Command::descriptions().to_string()).await?;
-            // }
+            Ok(Command::Help) => {
+                // Just send the description of all commands.
+                bot.send_message(msg.chat.id, Command::descriptions().to_string())
+                    .await?;
+            }
+            Ok(Command::SimpleNotification) => {
+                dialogue
+                    .update(State::SimpleNotificationBuild(
+                        SimpleNotificationBuildState::Text,
+                    ))
+                    .await?;
+                bot.send_message(msg.chat.id, "Text of notification?".to_string())
+                    .await?;
+            }
+
             Ok(Command::AddBirthday) => {
                 dialogue
                     .update(State::BirthdayBuild(BirthdayBuildState::Name))
@@ -267,4 +415,3 @@ async fn command_handler(
 
     Ok(())
 }
-
