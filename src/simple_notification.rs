@@ -1,9 +1,8 @@
-use std::error::Error;
-
-use chrono::{NaiveDate, NaiveTime};
+use chrono::{DateTime, FixedOffset, Local, NaiveDate, NaiveDateTime, NaiveTime};
 use derive_builder::Builder;
 use teloxide::prelude::*;
 
+use crate::task::Notification;
 use crate::{HandlerResult, MyDialogue, State};
 
 #[derive(Debug, Builder, Clone)]
@@ -12,6 +11,37 @@ pub struct SimpleNotification {
     text: String,
     date: NaiveDate,
     daytime: NaiveTime,
+}
+
+impl Notification for SimpleNotification {
+    fn preping(&self) -> Option<u16> {
+        None
+    }
+
+    fn enable(&mut self) {
+        self.enabled = true;
+    }
+
+    fn disable(&mut self) {
+        self.enabled = false;
+    }
+
+    fn next_ping(&self) -> Option<chrono::DateTime<Local>> {
+        let off = FixedOffset::east_opt(3 * 3600).unwrap(); // MOSCOW = UTC+3
+        match self.enabled {
+            // true => Some(DateTime::from(NaiveDateTime::new(self.date, self.daytime), off)),
+            true => Some(DateTime::from_local(NaiveDateTime::new(self.date, self.daytime), off)),
+            false => None,
+        }
+    }
+
+    fn message(&self) -> String {
+        self.text.clone()
+    }
+
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
 }
 
 #[derive(Clone)]

@@ -1,5 +1,3 @@
-use std::error::Error;
-
 use chrono::NaiveTime;
 use derive_builder::Builder;
 use teloxide::prelude::*;
@@ -15,7 +13,7 @@ pub struct Birthday {
     bmonth: u8,
     byear: Option<u16>,
     // How many days before birthday should be first ping
-    preping: Option<u8>,
+    preping: Option<u16>,
     daytime_to_ping: NaiveTime,
 }
 
@@ -99,7 +97,7 @@ pub(crate) async fn date(bot: Bot, msg: Message, dialogue: MyDialogue, mut bb: B
 pub(crate) async fn preping(bot: Bot, msg: Message, dialogue: MyDialogue, mut bb: BirthdayBuilder) -> HandlerResult {
     match msg.text() {
         Some(text) => {
-            if let Ok(n) = text.parse::<u8>() {
+            if let Ok(n) = text.parse::<u16>() {
                 if n == 0 {
                     bb.preping(None);
                 } else {
