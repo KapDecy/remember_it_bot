@@ -1,9 +1,12 @@
+use std::sync::Arc;
+
 use chrono::{DateTime, FixedOffset, Local, NaiveDate, NaiveDateTime, NaiveTime};
 use derive_builder::Builder;
 use teloxide::prelude::*;
+use tokio::sync::Mutex;
 
-use crate::task::Notification;
-use crate::{HandlerResult, MyDialogue, State};
+use crate::task::{create_task, Notification};
+use crate::{HandlerResult, MyDialogue, State, Store};
 
 #[derive(Debug, Builder, Clone)]
 pub struct SimpleNotification {
@@ -69,12 +72,7 @@ pub(crate) async fn text(bot: Bot, msg: Message, dialogue: MyDialogue) -> Handle
     Ok(())
 }
 
-pub(crate) async fn date(
-    bot: Bot,
-    msg: Message,
-    dialogue: MyDialogue,
-    mut snb: SimpleNotificationBuilder,
-) -> HandlerResult {
+pub(crate) async fn date(bot: Bot, msg: Message, dialogue: MyDialogue, mut snb: SimpleNotificationBuilder) -> HandlerResult {
     if let Some(text) = msg.text() {
         let v: Vec<_> = text.split(':').map(|x| x.parse::<i32>().unwrap()).collect();
         let date = NaiveDate::from_ymd_opt(v[2], v[1] as u32, v[0] as u32).unwrap();
@@ -92,12 +90,7 @@ pub(crate) async fn date(
     }
     Ok(())
 }
-pub(crate) async fn time(
-    bot: Bot,
-    msg: Message,
-    dialogue: MyDialogue,
-    mut snb: SimpleNotificationBuilder,
-) -> HandlerResult {
+pub(crate) async fn time(bot: Bot, msg: Message, dialogue: MyDialogue, mut snb: SimpleNotificationBuilder) -> HandlerResult {
     if let Some(text) = msg.text() {
         let v: Vec<_> = text.split(':').map(|x| x.parse::<u32>().unwrap()).collect();
         let time = NaiveTime::from_hms_opt(v[0], v[1], 0).unwrap();
@@ -107,11 +100,8 @@ pub(crate) async fn time(
             .update(State::SimpleNotificationBuild(SimpleNotificationBuildState::Build(snb)))
             .await?;
 
-        bot.send_message(
-            msg.chat.id,
-            "What time of day you want me to send you this notification? \n\"hh:mm\"",
-        )
-        .await?;
+        bot.send_message(msg.chat.id, "Exelente! send any message to activate notification")
+            .await?;
     }
     Ok(())
 }
@@ -119,8 +109,19 @@ pub(crate) async fn build(
     bot: Bot,
     msg: Message,
     dialogue: MyDialogue,
-    snb: SimpleNotificationBuilder,
+    mut snb: SimpleNotificationBuilder,
+    store: Store,
 ) -> HandlerResult {
-    todo!();
+    bot.send_message(
+        msg.chat.id,
+        "Simple Notification was build and enabled. You can use me again ;)",
+    )
+    .await
+    .unwrap();
+    dialogue.update(State::Start).await.unwrap();
+    let name = snb.text.as_ref().unwrap().clone();
+    let sn = Arc::new(Mutex::new(snb.enabled(true).build().unwrap()));
+    store.lock().await.insert(name, create_task(sn));
+
     Ok(())
 }

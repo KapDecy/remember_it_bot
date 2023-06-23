@@ -3,12 +3,16 @@ mod simple_notification;
 mod task;
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use birthday::BirthdayBuildState;
 use simple_notification::SimpleNotificationBuildState;
+use task::TaskCommand;
 use teloxide::types::Me;
 use teloxide::utils::command::BotCommands;
 use teloxide::{dispatching::dialogue::InMemStorage, prelude::*};
+use tokio::sync::mpsc::Sender;
+use tokio::sync::Mutex;
 
 type MyDialogue = Dialogue<State, InMemStorage<State>>;
 type HandlerResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
@@ -33,6 +37,8 @@ pub enum State {
     SimpleNotificationBuild(simple_notification::SimpleNotificationBuildState),
 }
 
+pub type Store = Arc<Mutex<HashMap<String, Sender<TaskCommand>>>>;
+
 #[tokio::main]
 async fn main() {
     pretty_env_logger::init();
@@ -43,7 +49,7 @@ async fn main() {
     // let bot = Bot::from_env();
     let bot = Bot::new(token);
 
-    let notifys: HashMap<String, tokio::sync::mpsc::Sender<task::TaskCommand>> = HashMap::new();
+    let notifys: Store = Arc::new(Mutex::new(HashMap::new()));
 
     let handler = Update::filter_message()
         .enter_dialogue::<Message, InMemStorage<State>, State>()
@@ -64,7 +70,8 @@ async fn main() {
         );
 
     Dispatcher::builder(bot, handler)
-        .dependencies(dptree::deps![InMemStorage::<State>::new()])
+        .dependencies(dptree::deps![InMemStorage::<State>::new(), notifys])
+        // .dependencies(dptree::deps![InMemStorage::<Store>::new()])
         .enable_ctrlc_handler()
         .build()
         .dispatch()
@@ -76,15 +83,13 @@ async fn command_handler(bot: Bot, msg: Message, dialogue: MyDialogue, me: Me) -
         match BotCommands::parse(text, me.username()) {
             Ok(Command::Help) => {
                 // Just send the description of all commands.
-                bot.send_message(msg.chat.id, Command::descriptions().to_string())
-                    .await?;
+                bot.send_message(msg.chat.id, Command::descriptions().to_string()).await?;
             }
             Ok(Command::SimpleNotification) => {
                 dialogue
                     .update(State::SimpleNotificationBuild(SimpleNotificationBuildState::Text))
                     .await?;
-                bot.send_message(msg.chat.id, "Text of notification?".to_string())
-                    .await?;
+                bot.send_message(msg.chat.id, "Text of notification?".to_string()).await?;
             }
 
             Ok(Command::AddBirthday) => {
