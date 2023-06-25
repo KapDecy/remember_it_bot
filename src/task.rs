@@ -1,8 +1,9 @@
-use std::sync::Arc;
-
 use chrono::{DateTime, Local};
+use teloxide::requests::Requester;
+use teloxide::types::ChatId;
+use teloxide::Bot;
 use tokio::select;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc;
 
 #[derive(Debug)]
 pub enum TaskCommand {
@@ -11,9 +12,9 @@ pub enum TaskCommand {
     Delete,
 }
 
-pub type Notify = Arc<Mutex<dyn Notification>>;
+// pub type Notify = Arc<Mutex<dyn Notification>>;
 
-pub trait Notification: Send + 'static {
+pub trait Notification: Send + Sync + 'static {
     fn preping(&self) -> Option<u16>;
     fn enabled(&self) -> bool;
     fn enable(&mut self);
@@ -22,20 +23,24 @@ pub trait Notification: Send + 'static {
     fn message(&self) -> String;
 }
 
-pub fn create_task(notify: Notify) -> mpsc::Sender<TaskCommand> {
+pub fn create_task(notify: impl Notification, bot: Bot, chat_id: ChatId) -> mpsc::Sender<TaskCommand> {
     // let notify = notify;
     let (control_tx, mut control_rx) = mpsc::channel::<TaskCommand>(1);
 
     tokio::spawn(async move {
-        let notilock = notify.lock().await;
+        // let notilock = notify.lock().await;
         loop {
-            if notilock.enabled() {
+            if notify.enabled() {
                 let now = chrono::offset::Local::now();
-                let waiter = tokio::time::sleep((notilock.next_ping().unwrap() - now).to_std().unwrap());
+                let waiter = tokio::time::sleep((notify.next_ping().unwrap() - now).to_std().unwrap());
 
                 select! {
-                    _ = waiter => {println!("got ping"); break;},
-                    tc = control_rx.recv() => {println!("got task command {tc:#?}")}
+                    _ = waiter => {
+                        println!("got ping on: \'{}\'", notify.message());
+                        bot.send_message(chat_id, notify.message()).await.unwrap();
+                        break;
+                    },
+                    tc = control_rx.recv() => {println!("got task command {tc:#?}"); todo!("commands for tasks")}
                 }
             };
             //

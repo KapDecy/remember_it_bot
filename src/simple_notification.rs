@@ -120,8 +120,12 @@ pub(crate) async fn build(
     .unwrap();
     dialogue.update(State::Start).await.unwrap();
     let name = snb.text.as_ref().unwrap().clone();
-    let sn = Arc::new(Mutex::new(snb.enabled(true).build().unwrap()));
-    store.lock().await.insert(name, create_task(sn));
+    // let sn = Arc::new(Mutex::new(snb.enabled(true).build().unwrap()));
+    // store.lock().await.insert(name, create_task(sn));
+    store.lock().await.insert(
+        name,
+        create_task(snb.enabled(true).build().unwrap(), bot.clone(), msg.chat.id),
+    );
 
     Ok(())
 }
